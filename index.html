@@ -573,7 +573,7 @@ function exportCSV(){
 }
 
 /* ---------------- add sheet ---------------- */
-const PAYMENT_SUGGESTIONS = ["เงินสด","โอน SCB","Make by KBank","บัตรเครดิต"];
+const PAYMENT_SUGGESTIONS = ["เงินสด","โอน SCB","Make by KBank","กรุงไทย (Krungthai NEXT)","เป๋าตัง","พร้อมเพย์","บัตรเครดิต"];
 function isCreditCardMethod(v){ return (v||"").trim() === "บัตรเครดิต"; }
 function uniquePaymentMethods(){
   const set = new Set(PAYMENT_SUGGESTIONS);
