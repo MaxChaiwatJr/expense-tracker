@@ -1,4 +1,4 @@
-const CACHE_NAME = "rr-rj-cache-v3";
+const CACHE_NAME = "rr-rj-cache-v5";
 const ASSETS = [
   "./",
   "./index.html",
@@ -25,6 +25,21 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const isHTML = event.request.mode === "navigate" || event.request.destination === "document";
+  if (isHTML) {
+    // Network-first for the app shell so updates show up immediately.
+    event.respondWith(
+      fetch(event.request)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          return res;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+  // Cache-first for static assets (icons, manifest, etc.)
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;

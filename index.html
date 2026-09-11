@@ -183,6 +183,10 @@ function todayStr(){
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
+function nowTimeStr(){
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
 function fmtMoney(n){
   return new Intl.NumberFormat("th-TH",{minimumFractionDigits:0,maximumFractionDigits:2}).format(n||0);
 }
@@ -271,11 +275,18 @@ function monthStats(y,m){
   };
 }
 function sortedTxns(){
-  return [...state.data.txns].sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:(b.createdAt-a.createdAt));
+  return [...state.data.txns].sort((a,b)=>{
+    const at = `${a.date} ${a.time||"00:00"}`, bt = `${b.date} ${b.time||"00:00"}`;
+    if(at !== bt) return at < bt ? 1 : -1;
+    return (b.createdAt||0) - (a.createdAt||0);
+  });
 }
 
 function txnMetaLine(t){
   const parts = [];
+  if(t.time) parts.push(`🕐 ${t.time}`);
+  if(t.travelType==='fuel') parts.push(`⛽ น้ำมันรถส่วนตัว${t.fuelPricePerLiter?` (${fmtMoney(t.fuelPricePerLiter)}/ลิตร)`:""}`);
+  if(t.travelType==='public') parts.push(`🚌 ขนส่งสาธารณะ`);
   if(t.location) parts.push(`📍 ${escapeHtml(t.location)}`);
   if(t.paymentMethod){
     let label = t.paymentMethod;
@@ -463,6 +474,19 @@ function renderSettings(){
         <div style="font-size:13px;color:var(--text-soft);margin-bottom:2px">จำนวนรายการทั้งหมด</div>
         <div class="mono" style="font-size:20px;font-weight:600">${state.data.txns.length} รายการ</div>
       </div>
+      <div class="settings-card">
+        <div class="field-label" style="margin-bottom:10px">ส่งออก CSV ตามช่วงเดือน (ไม่เลือก = เอาทั้งหมด)</div>
+        <div style="display:flex;gap:10px;margin-bottom:2px">
+          <div style="flex:1">
+            <div style="font-size:11px;color:var(--text-soft);margin-bottom:4px">จากเดือน</div>
+            <input type="month" id="exportFrom" class="plain-input" />
+          </div>
+          <div style="flex:1">
+            <div style="font-size:11px;color:var(--text-soft);margin-bottom:4px">ถึงเดือน</div>
+            <input type="month" id="exportTo" class="plain-input" />
+          </div>
+        </div>
+      </div>
       <button class="btn-primary" id="exportBtn">⬇ ส่งออกเป็น CSV</button>
       <button class="btn-danger" id="resetBtn">🗑 ล้างข้อมูลทั้งหมด</button>
       <div class="fine-print">
@@ -499,7 +523,11 @@ function attachPageEvents(){
     });
   }
   if(state.tab==="settings"){
-    document.getElementById("exportBtn").addEventListener("click", exportCSV);
+    document.getElementById("exportBtn").addEventListener("click", ()=>{
+      const from = document.getElementById("exportFrom").value; // YYYY-MM or ""
+      const to = document.getElementById("exportTo").value;
+      exportCSV(from, to);
+    });
     document.getElementById("resetBtn").addEventListener("click", ()=>{
       if(confirm("ลบข้อมูลทั้งหมดถาวร ต้องการดำเนินการต่อหรือไม่?")){
         state.data = { txns: [], categories: DEFAULT_CATEGORIES, creditCards: DEFAULT_CREDIT_CARDS, fundSources: DEFAULT_FUND_SOURCES };
@@ -558,16 +586,39 @@ function drawCharts(){
 }
 
 /* ---------------- CSV export ---------------- */
-function exportCSV(){
-  const header = "วันที่,ประเภท,หมวดหมู่,สถานที่,วิธีชำระ,บัตรเครดิต,แหล่งเงิน,จำนวนเงิน,โน้ต\n";
-  const rows = [...state.data.txns].sort((a,b)=> a.date<b.date?-1:1)
-    .map(t=> `${t.date},${t.type==="income"?"รายรับ":"รายจ่าย"},${t.category},${t.location||""},${t.paymentMethod||""},${t.creditCard||""},${t.fundSource||""},${t.amount},"${(t.note||"").replace(/"/g,'""')}"`)
+function exportCSV(fromMonth, toMonth){
+  let txns = [...state.data.txns];
+  if(fromMonth) txns = txns.filter(t=> t.date.slice(0,7) >= fromMonth);
+  if(toMonth) txns = txns.filter(t=> t.date.slice(0,7) <= toMonth);
+
+  if(txns.length===0){
+    showToast("ไม่พบรายการในช่วงที่เลือก");
+    return;
+  }
+
+  const header = "วันที่,เวลา,ประเภท,หมวดหมู่,ประเภทเดินทาง,ราคาน้ำมัน/ลิตร,สถานที่,วิธีชำระ,บัตรเครดิต,แหล่งเงิน,จำนวนเงิน,โน้ต\n";
+  const rows = txns.sort((a,b)=> a.date<b.date?-1:1)
+    .map(t=> [
+      t.date,
+      t.time||"",
+      t.type==="income"?"รายรับ":"รายจ่าย",
+      t.category,
+      t.travelType==='fuel'?'น้ำมันรถส่วนตัว':t.travelType==='public'?'ขนส่งสาธารณะ':"",
+      t.fuelPricePerLiter||"",
+      t.location||"",
+      t.paymentMethod||"",
+      t.creditCard||"",
+      t.fundSource||"",
+      t.amount,
+      `"${(t.note||"").replace(/"/g,'""')}"`
+    ].join(","))
     .join("\n");
   const csv = "\uFEFF" + header + rows;
   const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = `รายรับรายจ่าย-${todayStr()}.csv`;
+  const rangeLabel = (fromMonth||toMonth) ? `-${fromMonth||"เริ่มต้น"}_ถึง_${toMonth||"ล่าสุด"}` : "";
+  a.href = url; a.download = `รายรับรายจ่าย${rangeLabel}-${todayStr()}.csv`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
@@ -581,9 +632,9 @@ function uniquePaymentMethods(){
   return [...set];
 }
 
-let addState = { type:"expense", category:null, amount:"", note:"", location:"", paymentMethod:"", creditCard:"", fundSource:null, date: todayStr() };
+let addState = { type:"expense", category:null, amount:"", note:"", location:"", paymentMethod:"", creditCard:"", fundSource:null, date: todayStr(), time: nowTimeStr(), travelType:null, fuelPricePerLiter:"" };
 function openAddSheet(){
-  addState = { type:"expense", category:null, amount:"", note:"", location:"", paymentMethod:"", creditCard:"", fundSource:null, date: todayStr() };
+  addState = { type:"expense", category:null, amount:"", note:"", location:"", paymentMethod:"", creditCard:"", fundSource:null, date: todayStr(), time: nowTimeStr(), travelType:null, fuelPricePerLiter:"" };
   renderAddSheet();
 }
 function closeAddSheet(){ document.getElementById("sheetHolder").innerHTML=""; }
@@ -620,6 +671,17 @@ function renderAddSheet(){
             <button class="cat-btn dashed" id="addCatBtn"><span class="ic">＋</span><span class="lb">เพิ่มใหม่</span></button>
           </div>
         </div>
+        ${addState.category === "เดินทาง" ? `
+        <div style="margin-bottom:18px">
+          <div class="field-label">ประเภทการเดินทาง (ไม่บังคับ)</div>
+          <div class="type-toggle" style="margin-bottom:${addState.travelType==='fuel'?'10px':'0'}">
+            <button class="type-btn ${addState.travelType==='fuel'?'active-expense':''}" data-travel="fuel">⛽ น้ำมันรถส่วนตัว</button>
+            <button class="type-btn ${addState.travelType==='public'?'active-income':''}" data-travel="public">🚌 ขนส่งสาธารณะ</button>
+          </div>
+          ${addState.travelType==='fuel' ? `
+            <input type="number" inputmode="decimal" id="fuelInput" class="plain-input" placeholder="ราคาน้ำมันต่อลิตร (บาท) ไม่บังคับ" value="${addState.fuelPricePerLiter}" />
+          ` : ""}
+        </div>` : ""}
         <div style="margin-bottom:18px">
           <div class="field-label">วิธีชำระ (พิมพ์เอง หรือเลือกจากที่เคยใช้)</div>
           <input type="text" id="paymentInput" class="plain-input" placeholder="เช่น เงินสด, โอน SCB, Make by KBank, บัตรเครดิต" list="paymentList" value="${escapeHtml(addState.paymentMethod)}" />
@@ -651,9 +713,15 @@ function renderAddSheet(){
             ${uniqueLocations().map(l=>`<option value="${escapeHtml(l)}"></option>`).join("")}
           </datalist>
         </div>
-        <div style="margin-bottom:18px">
-          <div class="field-label">วันที่</div>
-          <input type="date" id="dateInput" class="plain-input" value="${addState.date}" />
+        <div style="display:flex;gap:12px;margin-bottom:18px">
+          <div style="flex:1">
+            <div class="field-label">วันที่</div>
+            <input type="date" id="dateInput" class="plain-input" value="${addState.date}" />
+          </div>
+          <div style="flex:1">
+            <div class="field-label">เวลา</div>
+            <input type="time" id="timeInput" class="plain-input" value="${addState.time}" />
+          </div>
         </div>
         <div style="margin-bottom:22px">
           <div class="field-label">โน้ต (ไม่บังคับ)</div>
@@ -666,10 +734,14 @@ function renderAddSheet(){
   document.getElementById("sheetOverlay").addEventListener("click", (e)=>{ if(e.target.id==="sheetOverlay") closeAddSheet(); });
   document.getElementById("closeSheet").addEventListener("click", closeAddSheet);
   document.querySelectorAll("[data-type]").forEach(btn=>{
-    btn.addEventListener("click", ()=>{ addState.type=btn.dataset.type; addState.category=null; renderAddSheet(); });
+    btn.addEventListener("click", ()=>{ addState.type=btn.dataset.type; addState.category=null; addState.travelType=null; addState.fuelPricePerLiter=""; renderAddSheet(); });
   });
   document.querySelectorAll("[data-cat]").forEach(btn=>{
-    btn.addEventListener("click", ()=>{ addState.category=btn.dataset.cat; renderAddSheet(); });
+    btn.addEventListener("click", ()=>{
+      addState.category=btn.dataset.cat;
+      if(addState.category !== "เดินทาง"){ addState.travelType=null; addState.fuelPricePerLiter=""; }
+      renderAddSheet();
+    });
   });
   document.getElementById("addCatBtn").addEventListener("click", ()=>{
     const name = prompt("ชื่อหมวดหมู่ใหม่");
@@ -680,6 +752,14 @@ function renderAddSheet(){
       renderAddSheet();
     }
   });
+  document.querySelectorAll("[data-travel]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      addState.travelType = addState.travelType === btn.dataset.travel ? null : btn.dataset.travel;
+      if(addState.travelType !== "fuel") addState.fuelPricePerLiter = "";
+      renderAddSheet();
+    });
+  });
+  document.getElementById("fuelInput")?.addEventListener("input", (e)=>{ addState.fuelPricePerLiter = e.target.value; });
   document.querySelectorAll("[data-fund]").forEach(btn=>{
     btn.addEventListener("click", ()=>{ addState.fundSource = btn.dataset.fund; renderAddSheet(); });
   });
@@ -702,6 +782,7 @@ function renderAddSheet(){
   document.getElementById("cardInput").addEventListener("input", (e)=>{ addState.creditCard = e.target.value; });
   document.getElementById("locationInput").addEventListener("input", (e)=>{ addState.location = e.target.value; });
   document.getElementById("dateInput").addEventListener("input", (e)=>{ addState.date = e.target.value; });
+  document.getElementById("timeInput").addEventListener("input", (e)=>{ addState.time = e.target.value; });
   document.getElementById("noteInput").addEventListener("input", (e)=>{ addState.note = e.target.value; });
   updateSaveEnabled();
   document.getElementById("saveBtn").addEventListener("click", ()=>{
@@ -710,9 +791,12 @@ function renderAddSheet(){
     if(!(amount>0) || !addState.category) return;
     state.data.txns.unshift({
       id: uid(), type: addState.type, amount, category: addState.category, date,
+      time: addState.time || null,
       note: addState.note.trim(), location: addState.location.trim(),
       paymentMethod: addState.paymentMethod.trim(), creditCard: addState.creditCard.trim(),
       fundSource: addState.fundSource,
+      travelType: addState.category==="เดินทาง" ? addState.travelType : null,
+      fuelPricePerLiter: addState.travelType==="fuel" && addState.fuelPricePerLiter ? Number(addState.fuelPricePerLiter) : null,
       createdAt: Date.now()
     });
     saveData();
